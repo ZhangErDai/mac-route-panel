@@ -5,3 +5,19 @@
 /* Keep narrow layouts within the viewport; tables scroll inside their cards. */
 .card,.brand{min-width:0}.notice{overflow-wrap:anywhere}
 @media(max-width:850px){.layout,.left{grid-template-columns:minmax(0,1fr)}.search{min-width:0}.header>.button{flex-shrink:0}}
+
+/* Tabs and the domain-rules panel */
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin:0 0 22px;flex-wrap:wrap}
+.tab{border:0;background:none;padding:11px 18px;font-size:.95rem;font-weight:600;color:var(--muted);border-bottom:3px solid transparent;border-radius:8px 8px 0 0}
+.tab:hover:not(:disabled){background:#eef4fd;color:var(--ink)}
+.tab.active{color:var(--blue);border-bottom-color:var(--blue);background:none}
+.tab-count{display:inline-block;margin-left:4px;font-size:.78rem;font-weight:500;color:var(--muted)}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+.tab-panel .layout{margin-bottom:20px}
+.tab-panel > .card{margin-bottom:20px}
+.button.small{min-height:32px;padding:5px 12px;font-size:.82rem}
+.badge.blocked{background:#fdecee;color:#a32633;border-color:#f3c6cb}
+.preset{margin-top:18px;border-top:1px dashed var(--border);padding-top:14px}
+.preset h3{margin:0 0 10px;font-size:.9rem;color:var(--muted);font-weight:600}
+.interfaces-card .table-scroll{margin-top:4px}

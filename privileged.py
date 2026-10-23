@@ -5,7 +5,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from routing import execute
+import hosts
+from routing import execute as execute_route
+
+
+def execute(plan):
+    # Only fixed operations are reachable here; the plan was previewed and approved.
+    if isinstance(plan, dict) and plan.get('kind') == 'hosts':
+        return hosts.execute(plan)
+    return execute_route(plan)
 
 
 def main(request_path=None):

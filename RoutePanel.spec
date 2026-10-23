@@ -7,7 +7,7 @@ a = Analysis(
     pathex=[str(root)],
     binaries=[],
     datas=[(str(root / 'static'), 'static')],
-    hiddenimports=['privileged', 'uvicorn.logging', 'uvicorn.loops.asyncio',
+    hiddenimports=['privileged', 'hosts', 'uvicorn.logging', 'uvicorn.loops.asyncio',
                    'uvicorn.protocols.http.h11_impl', 'uvicorn.lifespan.on'],
     hookspath=[],
     hooksconfig={},

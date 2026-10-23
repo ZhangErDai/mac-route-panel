@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import hosts as hostsfile
 import routing
 
 ROOT = Path(__file__).resolve().parent
@@ -103,6 +104,7 @@ def create_app(port=8765, directory=None, shutdown=None):
     token = secrets.token_urlsafe(32)
     mutation = threading.Lock()
     plans = {}
+    host_plans = {}
     lifecycle = {'stopping': False}
     hosts = {f'127.0.0.1:{port}', f'localhost:{port}'}
 
@@ -137,6 +139,10 @@ def create_app(port=8765, directory=None, shutdown=None):
     async def route_error(request, exc):
         return JSONResponse({'error': str(exc)}, status_code=409)
 
+    @app.exception_handler(hostsfile.HostsError)
+    async def hosts_error(request, exc):
+        return JSONResponse({'error': str(exc)}, status_code=409)
+
     @app.exception_handler(Exception)
     async def unexpected_error(request, exc):
         logging.getLogger('route-panel').error('后台操作异常', exc_info=(type(exc), exc, exc.__traceback__))
@@ -162,6 +168,14 @@ def create_app(port=8765, directory=None, shutdown=None):
                 message = '上次 macOS 管理员授权失败。请通过本机终端或双击启动.command 启动后台后重试。'
             warnings.append(message)
         return dict(routes=rows, interfaces=list(snap['interfaces'].values()), warnings=warnings,
+                    busy=mutation.locked(), stopping=lifecycle['stopping'], updated=time.time())
+
+    @app.get('/api/hosts')
+    def get_hosts():
+        text = hostsfile.read()
+        managed, external = hostsfile.parse(text)
+        return dict(managed=managed,
+                    external=[dict(address=e['address'], domains=e['domains']) for e in external],
                     busy=mutation.locked(), stopping=lifecycle['stopping'], updated=time.time())
 
     async def body(request):
@@ -262,6 +276,45 @@ def create_app(port=8765, directory=None, shutdown=None):
         data = await body(request)
         from starlette.concurrency import run_in_threadpool
         return await run_in_threadpool(apply, str(data.get('id', '')))
+
+    def prepare_hosts(data):
+        if mutation.locked() or lifecycle['stopping']:
+            raise routing.RouteError('后台正在处理其他操作，请稍后再试。')
+        p = hostsfile.plan(data, hostsfile.read(), store.directory / 'hosts-backups')
+        pid = secrets.token_urlsafe(24)
+        now = time.monotonic()
+        for old in list(host_plans):
+            if host_plans[old]['expires'] < now:
+                del host_plans[old]
+        host_plans[pid] = dict(plan=p, expires=now + 180)
+        return dict(id=pid, action=p['action'], domain=p['domain'], rule=p['rule'],
+                    commands=p['commands'], adopted=p['adopted'],
+                    warning='本次会修改 /etc/hosts 并刷新 DNS 缓存，仅影响本机解析。')
+
+    def apply_hosts(pid):
+        if not mutation.acquire(blocking=False):
+            raise routing.RouteError('另一个操作正在执行，请等待完成。')
+        try:
+            if lifecycle['stopping']:
+                raise routing.RouteError('后台正在关闭。')
+            saved = host_plans.pop(pid, None)
+            if not saved or saved['expires'] < time.monotonic():
+                raise routing.RouteError('操作预览已过期，请重新预览。')
+            return admin_apply(saved['plan'], store.directory)
+        finally:
+            mutation.release()
+
+    @app.post('/api/hosts/preview')
+    async def preview_hosts(request: Request):
+        data = await body(request)
+        from starlette.concurrency import run_in_threadpool
+        return await run_in_threadpool(prepare_hosts, data)
+
+    @app.post('/api/hosts/apply')
+    async def apply_host_rule(request: Request):
+        data = await body(request)
+        from starlette.concurrency import run_in_threadpool
+        return await run_in_threadpool(apply_hosts, str(data.get('id', '')))
 
     @app.post('/api/shutdown')
     async def stop(request: Request):

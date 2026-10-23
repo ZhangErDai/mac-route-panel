@@ -151,6 +151,29 @@ class ApiTests(unittest.TestCase):
                 release.set();worker.join(4)
             self.assertEqual(result[0][0],409)
 
+    def test_hosts_snapshot_lists_managed_and_external_entries(self):
+        text = '127.0.0.1 localhost\n0.0.0.0 example.test\n'
+        with patch('hosts.read',return_value=text):
+            code,data=self.request('/api/hosts')
+        self.assertEqual(code,200)
+        self.assertEqual(data['managed'],[])
+        self.assertTrue(any(e['domains']==['localhost'] for e in data['external']))
+
+    def test_hosts_preview_and_apply_go_through_one_admin_helper(self):
+        text = '127.0.0.1 localhost\n'
+        with patch('hosts.read',return_value=text):
+            code,plan=self.request('/api/hosts/preview',dict(action='block',domain='dl.pstmn.io'))
+            self.assertEqual(code,200)
+            self.assertEqual(plan['rule']['address'],'0.0.0.0')
+            self.assertIn('0.0.0.0 dl.pstmn.io',plan['commands'])
+            with patch('app.admin_apply',return_value=dict(ok=True,message='模拟完成')) as admin:
+                code,result=self.request('/api/hosts/apply',dict(id=plan['id']))
+            self.assertEqual(code,200)
+            self.assertEqual(result['message'],'模拟完成')
+            self.assertEqual(admin.call_args[0][0]['kind'],'hosts')
+            code,error=self.request('/api/hosts/apply',dict(id=plan['id']))
+            self.assertEqual(code,409)
+
     def test_z_shutdown_returns_then_exits_and_releases_port(self):
         before=copy.deepcopy(self.state)
         code,data=self.request('/api/shutdown',{})
