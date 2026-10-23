@@ -71,7 +71,7 @@
             <div class="table-scroll"><table><thead><tr><th>域名</th><th>动作</th><th>解析为</th><th class="switch-col">操作</th></tr></thead><tbody id="hosts-rules"><tr><td colspan="4" class="empty">正在读取 /etc/hosts…</td></tr></tbody></table></div>
             <div class="table-footer"><span>规则写在 /etc/hosts 的受管块里，块外内容不做改动。</span><span id="hosts-updated"></span></div>
           </section>
-          <section class="card system-card"><details open><summary><h2>/etc/hosts 其他条目 <span>只读</span></h2><span id="external-count"></span></summary><div class="table-scroll"><table><thead><tr><th>IP</th><th>主机名</th></tr></thead><tbody id="hosts-external"></tbody></table></div><p class="muted footnote">受管块以外的条目由系统或其他软件维护，这里只展示、不修改。若与你要添加的域名冲突，会提示先手工处理。</p></details></section>
+          <section class="card system-card"><details open><summary><h2>/etc/hosts 其他条目 <span>只读</span></h2><span id="external-count"></span></summary><div class="table-scroll"><table><thead><tr><th>IP</th><th>主机名</th></tr></thead><tbody id="hosts-external"></tbody></table></div><p class="muted footnote">受管块以外的条目由系统或其他软件维护，这里只展示、不修改。标为“系统”的回环、链路本地、广播等条目永远不在本工具的改动范围内。</p></details></section>
         </section>
         <aside class="card add-card">
           <h2>新建域名规则</h2>

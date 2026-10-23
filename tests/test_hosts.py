@@ -21,9 +21,35 @@ class ParseTests(unittest.TestCase):
     def test_reads_managed_block_and_keeps_external_entries(self):
         text = hosts.render(BASE, [dict(domain='dl.pstmn.io', address='0.0.0.0', kind='block')])
         managed, external = hosts.parse(text)
-        self.assertEqual(managed, [dict(domain='dl.pstmn.io', address='0.0.0.0', kind='block')])
-        self.assertIn(dict(address='192.0.2.10', domains=['intranet.example'],
+        self.assertEqual(managed, [dict(domain='dl.pstmn.io', address='0.0.0.0',
+                                        kind='block', protected=False)])
+        self.assertIn(dict(address='192.0.2.10', domains=['intranet.example'], system=False,
                            raw='192.0.2.10      intranet.example'), external)
+
+    def test_system_entries_are_marked_read_only(self):
+        _, external = hosts.parse(BASE)
+        flagged = {e['address']: e['system'] for e in external}
+        self.assertTrue(flagged['127.0.0.1'])
+        self.assertTrue(flagged['::1'])
+        self.assertTrue(flagged['255.255.255.255'])
+        self.assertFalse(flagged['192.0.2.10'])
+        for address in ('127.0.0.1', '::1', '255.255.255.255', 'fe80::1', '0.0.0.0'):
+            self.assertTrue(hosts.system_address(address), address)
+        for address in ('0.0.0.0',):
+            self.assertFalse(hosts.protected(address), address)
+        for address in ('127.0.0.1', '127.0.0.2', '169.254.1.1', '224.0.0.1',
+                        '255.255.255.255', '::1'):
+            self.assertTrue(hosts.protected(address), address)
+
+    def test_protected_managed_entry_cannot_be_changed(self):
+        text = BASE + hosts.BEGIN + '\n127.0.0.1 keepme.internal\n' + hosts.END + '\n'
+        managed, _ = hosts.parse(text)
+        self.assertTrue(managed[0]['protected'])
+        for data in (dict(action='remove', domain='keepme.internal'),
+                     dict(action='block', domain='keepme.internal'),
+                     dict(action='pin', domain='keepme.internal', address='192.0.2.9')):
+            with self.assertRaises(hosts.HostsError):
+                hosts.plan(data, text)
 
     def test_unbalanced_markers_are_refused(self):
         for text in (hosts.BEGIN + '\n0.0.0.0 a.example\n', '0.0.0.0 a.example\n' + hosts.END + '\n'):
@@ -151,6 +177,28 @@ class ExecuteTests(unittest.TestCase):
             with self.assertRaises(OSError):
                 hosts.execute(p, path=self.path, flush=self.flush)
         self.assertNotIn('dl.pstmn.io', self.path.read_text())
+
+    def test_unexpected_rewrite_is_detected_and_reverted(self):
+        p = hosts.plan(dict(action='block', domain='dl.pstmn.io'), self.path.read_text(), None)
+        real = hosts._write
+        calls = []
+        def tampered(text, path=hosts.HOSTS):
+            calls.append(1)
+            real(text + '203.0.113.9 injected.example\n' if len(calls) == 1 else text, path)
+        with patch('hosts._write', side_effect=tampered):
+            with self.assertRaises(hosts.HostsError):
+                hosts.execute(p, path=self.path, flush=self.flush)
+        self.assertNotIn('injected.example', self.path.read_text())
+        self.assertNotIn('dl.pstmn.io', self.path.read_text())
+
+    def test_preview_that_would_drop_an_external_line_is_refused(self):
+        p = hosts.plan(dict(action='block', domain='dl.pstmn.io'), self.path.read_text(), None)
+        before = self.path.read_text()
+        p['text_after'] = p['text_after'].replace('192.0.2.10      intranet.example\n', '')
+        with self.assertRaises(hosts.HostsError):
+            hosts.execute(p, path=self.path, flush=self.flush)
+        self.assertEqual(self.path.read_text(), before)
+        self.assertEqual(self.flushed, 0)
 
     def test_helper_dispatch_routes_hosts_plans(self):
         import privileged

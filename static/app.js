@@ -52,10 +52,13 @@ function renderSystem() {
 function renderHosts() {
   $('#hosts-rules').innerHTML = hostRules.length ? hostRules.map(r => {
     const action = r.kind === 'block' ? '屏蔽' : '指定 IP';
-    return `<tr><td class="mono">${escape(r.domain)}</td><td><span class="badge ${r.kind === 'block' ? 'blocked' : 'tunnel'}">${action}</span></td><td class="mono">${escape(r.address)}</td><td class="switch-col"><button type="button" class="button secondary small rule-remove" data-domain="${escape(r.domain)}" ${busy || stopped ? 'disabled' : ''}>删除</button></td></tr>`;
+    const locked = Boolean(r.protected);
+    const control = locked ? '<span class="lock">系统条目</span>'
+      : `<button type="button" class="button secondary small rule-remove" data-domain="${escape(r.domain)}" ${busy || stopped ? 'disabled' : ''}>删除</button>`;
+    return `<tr><td class="mono">${escape(r.domain)}</td><td><span class="badge ${r.kind === 'block' ? 'blocked' : 'tunnel'}">${action}</span>${locked ? '<span class="status-note">受保护</span>' : ''}</td><td class="mono">${escape(r.address)}</td><td class="switch-col">${control}</td></tr>`;
   }).join('') : '<tr><td colspan="4" class="empty">还没有受管规则。右侧可以新建，或使用“屏蔽 Postman 自动更新”。</td></tr>';
   $('#hosts-count').textContent = `${hostRules.length} 条`;
-  $('#hosts-external').innerHTML = hostExternal.length ? hostExternal.map(e => `<tr><td class="mono">${escape(e.address)}</td><td class="mono">${escape(e.domains.join(' '))}</td></tr>`).join('') : '<tr><td colspan="2" class="empty">没有其他条目。</td></tr>';
+  $('#hosts-external').innerHTML = hostExternal.length ? hostExternal.map(e => `<tr><td class="mono">${escape(e.address)}</td><td class="mono">${escape(e.domains.join(' '))}${e.system ? ' <span class="badge blocked">系统</span>' : ''}</td></tr>`).join('') : '<tr><td colspan="2" class="empty">没有其他条目。</td></tr>';
   $('#external-count').textContent = `${hostExternal.length} 条`;
 }
 async function refresh({quiet=false}={}) {

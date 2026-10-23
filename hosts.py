@@ -29,6 +29,30 @@ class HostsError(Exception):
     pass
 
 
+def protected(address: str) -> bool:
+    """True for addresses this tool must never manage (loopback, link-local, ...)."""
+    if address == BLOCK:
+        return False
+    try:
+        ip = ipaddress.IPv4Address(address)
+    except ValueError:
+        return True  # IPv6 or anything unexpected inside the managed block
+    return ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+
+
+def system_address(address: str) -> bool:
+    """True for well-known system entries shown read-only in the UI."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    if ip.version == 6:
+        return ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified
+    return (ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
+            or address == BLOCK)
+
+
+
 def read(path=HOSTS) -> str:
     try:
         return Path(path).read_text()
@@ -42,10 +66,10 @@ def digest(text: str) -> str:
 
 def name(value) -> str:
     text = str(value or '').strip().lower().rstrip('.')
+    if text in RESERVED or text.endswith('.localhost'):
+        raise HostsError('系统保留的主机名（如 localhost、broadcasthost）不能在这里修改。')
     if not DOMAIN.match(text):
         raise HostsError('域名格式不正确，只能包含字母、数字、点和连字符，例如 test.com。')
-    if text in RESERVED or text.endswith('.localhost'):
-        raise HostsError('系统保留的主机名不能在这里修改。')
     return text
 
 
@@ -85,13 +109,14 @@ def parse(text: str):
             address, domain = parts
             managed.append(dict(domain=domain.lower(),
                                 address=address,
-                                kind='block' if address == BLOCK else 'pin'))
+                                kind='block' if address == BLOCK else 'pin',
+                                protected=protected(address)))
             continue
         if stripped and not stripped.startswith('#'):
             parts = stripped.split('#')[0].split()
             if len(parts) >= 2:
                 external.append(dict(address=parts[0], domains=parts[1:],
-                                     raw=line))
+                                     raw=line, system=system_address(parts[0])))
     if opened != closed:
         raise HostsError('受管块标记不完整，请先手工检查 /etc/hosts。')
     if len(managed) > MAX_RULES:
@@ -132,6 +157,9 @@ def merge(rules: list[dict], data: dict) -> list[dict]:
     if action not in ('block', 'pin', 'remove'):
         raise HostsError('不支持的操作。')
     target = name(data.get('domain'))
+    existing = next((r for r in rules if r['domain'] == target), None)
+    if existing and existing.get('protected'):
+        raise HostsError('该域名在受管块中对应回环、链路本地或广播地址，属于系统条目，页面不会修改它。请手工检查 /etc/hosts。')
     if action == 'remove':
         remaining = [r for r in rules if r['domain'] != target]
         if len(remaining) == len(rules):
@@ -239,7 +267,6 @@ def plan(data: dict, text: str, backup_dir=None) -> dict:
     after = merge(rules, data)
     source = drop_external(text, adopting) if adopting else text
     new_text = render(source, after)
-
     commands = []
     if adopting:
         commands.append(f"迁移原有行：{adopting['raw'].strip()}")
@@ -253,8 +280,14 @@ def plan(data: dict, text: str, backup_dir=None) -> dict:
     return dict(kind='hosts', action=action, domain=target,
                 rule=None if action == 'remove' else next(r for r in after if r['domain'] == target),
                 before=[dict(r) for r in rules], after=after, digest=digest(text),
+                external_before=external, external_after=parse(new_text)[1],
                 text_before=text, text_after=new_text, backup_dir=str(backup_dir or ''),
                 commands=commands, adopted=bool(adopting))
+
+
+def _shape(rules) -> list[tuple]:
+    """Comparable form of a rule list, ignoring derived flags."""
+    return [(r['domain'], r['address']) for r in rules]
 
 
 def execute(p: dict, path=HOSTS, flush=_flush, backup_dir=None) -> dict:
@@ -262,18 +295,22 @@ def execute(p: dict, path=HOSTS, flush=_flush, backup_dir=None) -> dict:
     text = read(path)
     if digest(text) != p['digest']:
         raise HostsError('/etc/hosts 在授权期间被其他程序修改，本次操作已取消，请刷新后重试。')
-    rules, _ = parse(text)
-    if [dict(r) for r in rules] != p['before']:
+    rules, external = parse(text)
+    if _shape(rules) != _shape(p['before']):
         raise HostsError('受管块在授权期间发生变化，本次操作已取消，请刷新后重试。')
     new_text = p['text_after']
+    # Hard invariant: entries outside the managed block may only change by the
+    # single line explicitly adopted in the preview. Nothing else is ours to touch.
+    if parse(new_text)[1] != p['external_after']:
+        raise HostsError('操作预览与将写入的内容不一致，已取消。请重新预览。')
     folder = backup_dir or p.get('backup_dir') or None
     changed = new_text != text
     if changed:
         _backup(text, folder)
         try:
             _write(new_text, path)
-            current, _ = parse(read(path))
-            if [dict(r) for r in current] != p['after']:
+            current, current_external = parse(read(path))
+            if _shape(current) != _shape(p['after']) or current_external != p['external_after']:
                 raise HostsError('写入后核对不一致，正在尝试恢复原文件。')
         except Exception:
             try:

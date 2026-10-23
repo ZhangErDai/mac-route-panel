@@ -175,7 +175,8 @@ def create_app(port=8765, directory=None, shutdown=None):
         text = hostsfile.read()
         managed, external = hostsfile.parse(text)
         return dict(managed=managed,
-                    external=[dict(address=e['address'], domains=e['domains']) for e in external],
+                    external=[dict(address=e['address'], domains=e['domains'], system=e['system'])
+                              for e in external],
                     busy=mutation.locked(), stopping=lifecycle['stopping'], updated=time.time())
 
     async def body(request):
