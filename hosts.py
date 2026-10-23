@@ -120,8 +120,9 @@ def parse(text: str):
         if stripped and not stripped.startswith('#'):
             parts = stripped.split('#')[0].split()
             if len(parts) >= 2:
-                external.append(dict(address=parts[0], domains=parts[1:],
-                                     raw=line, system=system_address(parts[0])))
+                external.append(dict(address=parts[0], domains=parts[1:], raw=line,
+                                     system=system_address(parts[0]),
+                                     id=entry_id(line)))
     if opened != closed:
         raise HostsError('受管块标记不完整，请先手工检查 /etc/hosts。')
     if len(managed) > MAX_RULES:
@@ -204,6 +205,29 @@ def drop_external(text: str, entry: dict) -> str:
     return ''.join(out)
 
 
+def entry_id(raw: str) -> str:
+    return hashlib.sha1(raw.encode()).hexdigest()[:12]
+
+
+def _replace_address(raw: str, address: str) -> str:
+    match = re.match(r'^(\s*)\S+(.*)$', raw)
+    if not match:
+        raise HostsError('这一行格式无法识别，请手工处理。')
+    return f'{match[1]}{address}{match[2]}'
+
+
+def _drop_line(text: str, raw: str) -> str:
+    lines, out, removed = text.splitlines(keepends=True), [], False
+    for line in lines:
+        if not removed and line.rstrip('\n') == raw:
+            removed = True
+            continue
+        out.append(line)
+    if not removed:
+        raise HostsError('这条记录已变化，请刷新后重试。')
+    return ''.join(out)
+
+
 def _flush() -> None:
     for command in (['/usr/bin/dscacheutil', '-flushcache'],
                     ['/usr/bin/killall', '-HUP', 'mDNSResponder']):
@@ -255,6 +279,8 @@ def _backup(text: str, directory) -> None:
 def plan(data: dict, text: str, backup_dir=None) -> dict:
     rules, external = parse(text)
     action = data.get('action')
+    if action in ('line-update', 'line-delete'):
+        return _plan_line(action, data, text, rules, external, backup_dir)
     target = name(data.get('domain'))
     if action not in ('block', 'pin', 'remove'):
         raise HostsError('不支持的操作。')
@@ -293,6 +319,46 @@ def plan(data: dict, text: str, backup_dir=None) -> dict:
 def _shape(rules) -> list[tuple]:
     """Comparable form of a rule list, ignoring derived flags."""
     return [(r['domain'], r['address']) for r in rules]
+
+
+def _with_block(text: str, rules: list) -> str:
+    """Keep files without a managed block untouched when only a plain line changes."""
+    return render(text, rules) if rules or BEGIN in text else text
+
+
+def _plan_line(action: str, data: dict, text: str, rules: list, external: list, backup_dir) -> dict:
+    """Edit or delete one existing /etc/hosts line that is not in the managed block."""
+    ref = str(data.get('entry') or '')
+    entry = next((e for e in external if e['id'] == ref), None)
+    if not entry:
+        raise HostsError('这条记录已变化，请刷新后重试。')
+    if entry['system']:
+        raise HostsError('这是系统维护的条目（回环、链路本地、广播等），不能在这里修改或删除。')
+
+    if action == 'line-update':
+        address = fixed(data.get('address'))
+        target = _replace_address(entry['raw'], address)
+        command = f"修改：{entry['raw'].strip()}\n    → {target.strip()}"
+    else:
+        target = None
+        command = f"删除：{entry['raw'].strip()}"
+
+    new_text = _with_block(_drop_line(text, entry['raw']), rules) if target is None else \
+        _with_block(text.replace(entry['raw'], target, 1), rules)
+    commands = [command, '/usr/bin/dscacheutil -flushcache',
+                '/usr/bin/killall -HUP mDNSResponder']
+    warning = ''
+    if len(entry['domains']) > 1:
+        others = '、'.join(entry['domains'][1:])
+        warning = f"这一行同时包含 {others}，本操作会一并影响它们。"
+    return dict(kind='hosts', action=action, domain=' '.join(entry['domains']),
+                rule=None, entry=dict(address=entry['address'], domains=entry['domains'],
+                                      id=entry['id'], raw=entry['raw']),
+                line_after=None if target is None else target.strip(),
+                before=[dict(r) for r in rules], after=rules, digest=digest(text),
+                external_before=external, external_after=parse(new_text)[1],
+                text_before=text, text_after=new_text, backup_dir=str(backup_dir or ''),
+                commands=commands, adopted=False, warning=warning)
 
 
 def execute(p: dict, path=HOSTS, flush=_flush, backup_dir=None) -> dict:

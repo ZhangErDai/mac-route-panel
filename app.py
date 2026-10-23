@@ -176,7 +176,7 @@ def create_app(port=8765, directory=None, shutdown=None):
         managed, external = hostsfile.parse(text)
         return dict(managed=managed,
                     external=[dict(address=e['address'], domains=e['domains'], system=e['system'],
-                                   block=e['address'] in (hostsfile.BLOCK, '::'))
+                                   block=e['address'] in (hostsfile.BLOCK, '::'), id=e['id'])
                               for e in external],
                     busy=mutation.locked(), stopping=lifecycle['stopping'], updated=time.time())
 
@@ -290,8 +290,9 @@ def create_app(port=8765, directory=None, shutdown=None):
                 del host_plans[old]
         host_plans[pid] = dict(plan=p, expires=now + 180)
         return dict(id=pid, action=p['action'], domain=p['domain'], rule=p['rule'],
+                    entry=p.get('entry'), line_after=p.get('line_after'),
                     commands=p['commands'], adopted=p['adopted'],
-                    warning='本次会修改 /etc/hosts 并刷新 DNS 缓存，仅影响本机解析。')
+                    warning=p.get('warning') or '本次会修改 /etc/hosts 并刷新 DNS 缓存，仅影响本机解析。')
 
     def apply_hosts(pid):
         if not mutation.acquire(blocking=False):

@@ -23,8 +23,13 @@ class ParseTests(unittest.TestCase):
         managed, external = hosts.parse(text)
         self.assertEqual(managed, [dict(domain='dl.pstmn.io', address='0.0.0.0',
                                         kind='block', protected=False)])
-        self.assertIn(dict(address='192.0.2.10', domains=['intranet.example'], system=False,
-                           raw='192.0.2.10      intranet.example'), external)
+        self.assertIn(dict(domain='dl.pstmn.io', address='0.0.0.0', kind='block', protected=False),
+                      managed)
+        entry = next(e for e in external if e['address'] == '192.0.2.10')
+        self.assertEqual(entry['domains'], ['intranet.example'])
+        self.assertEqual(entry['raw'], '192.0.2.10      intranet.example')
+        self.assertFalse(entry['system'])
+        self.assertEqual(len(entry['id']), 12)
 
     def test_system_entries_are_marked_read_only(self):
         _, external = hosts.parse(BASE)
@@ -218,6 +223,69 @@ class ExecuteTests(unittest.TestCase):
         with patch('privileged.execute_route', return_value=dict(ok=True)) as run:
             self.assertTrue(privileged.execute(dict(action='disable'))['ok'])
             run.assert_called_once_with(dict(action='disable'))
+
+
+class LineEditTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.path = Path(self.directory.name) / 'hosts'
+        self.path.write_text(BASE)
+        self.flushed = 0
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def flush(self):
+        self.flushed += 1
+
+    def entry(self, text=None):
+        return next(e for e in hosts.parse(text or self.path.read_text())[1]
+                    if e['address'] == '192.0.2.10')
+
+    def run_plan(self, **data):
+        p = hosts.plan(dict(data), self.path.read_text(), Path(self.directory.name) / 'backups')
+        return p, hosts.execute(p, path=self.path, flush=self.flush)
+
+    def test_update_changes_only_the_target_line(self):
+        entry = self.entry()
+        plan, result = self.run_plan(action='line-update', entry=entry['id'], address='192.0.2.44')
+        self.assertTrue(result['changed'])
+        self.assertEqual(plan['line_after'], '192.0.2.44      intranet.example')
+        text = self.path.read_text()
+        self.assertIn('192.0.2.44      intranet.example', text)
+        self.assertIn('127.0.0.1\tlocalhost', text)
+        self.assertEqual(self.flushed, 1)
+
+    def test_delete_removes_only_that_line(self):
+        entry = self.entry()
+        self.run_plan(action='line-delete', entry=entry['id'])
+        text = self.path.read_text()
+        self.assertNotIn('intranet.example', text)
+        self.assertIn('127.0.0.1\tlocalhost', text)
+        self.assertIn('::1             localhost', text)
+
+    def test_system_entries_are_never_editable(self):
+        for address in ('127.0.0.1', '::1', '255.255.255.255'):
+            entry = next(e for e in hosts.parse(BASE)[1] if e['address'] == address)
+            for action in ('line-update', 'line-delete'):
+                with self.assertRaises(hosts.HostsError):
+                    hosts.plan(dict(action=action, entry=entry['id'], address='192.0.2.9'), BASE)
+
+    def test_unknown_entry_id_is_refused(self):
+        with self.assertRaises(hosts.HostsError):
+            hosts.plan(dict(action='line-delete', entry='doesnotexist'), BASE)
+
+    def test_multi_hostname_line_changes_together_and_warns(self):
+        text = BASE + '192.0.2.50 a.example b.example\n'
+        entry = next(e for e in hosts.parse(text)[1] if e['address'] == '192.0.2.50')
+        plan = hosts.plan(dict(action='line-update', entry=entry['id'], address='192.0.2.51'), text)
+        self.assertIn('b.example', plan['warning'])
+        self.assertEqual(plan['line_after'], '192.0.2.51 a.example b.example')
+
+    def test_editing_without_managed_block_does_not_create_one(self):
+        entry = self.entry()
+        plan = hosts.plan(dict(action='line-update', entry=entry['id'], address='192.0.2.44'), BASE)
+        self.assertNotIn(hosts.BEGIN, plan['text_after'])
 
 
 if __name__ == '__main__':

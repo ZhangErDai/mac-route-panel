@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 import uvicorn
 import app
+import hosts
 import routing
 from test_routing import fixture
 
@@ -177,6 +178,24 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(admin.call_args[0][0]['kind'],'hosts')
             code,error=self.request('/api/hosts/apply',dict(id=plan['id']))
             self.assertEqual(code,409)
+
+    def test_hosts_line_edit_and_delete_reach_the_admin_helper(self):
+        text='127.0.0.1 localhost\n192.0.2.10 intranet.example\n'
+        entry=hosts.entry_id('192.0.2.10 intranet.example')
+        system=hosts.entry_id('127.0.0.1 localhost')
+        with patch('hosts.read',return_value=text):
+            code,plan=self.request('/api/hosts/preview',
+                                   dict(action='line-update',entry=entry,address='192.0.2.44'))
+            self.assertEqual(code,200)
+            self.assertEqual(plan['line_after'],'192.0.2.44 intranet.example')
+            self.assertEqual(plan['entry']['domains'],['intranet.example'])
+            with patch('app.admin_apply',return_value=dict(ok=True,message='模拟完成')) as admin:
+                code,result=self.request('/api/hosts/apply',dict(id=plan['id']))
+            self.assertEqual(code,200)
+            self.assertEqual(admin.call_args[0][0]['action'],'line-update')
+            code,data=self.request('/api/hosts/preview',dict(action='line-delete',entry=system))
+            self.assertEqual(code,409)
+            self.assertIn('系统',data['error'])
 
     def test_z_shutdown_returns_then_exits_and_releases_port(self):
         before=copy.deepcopy(self.state)

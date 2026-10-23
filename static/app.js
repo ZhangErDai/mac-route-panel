@@ -2,7 +2,7 @@
 const $ = (selector) => document.querySelector(selector);
 const token = $('meta[name="session-token"]').content;
 let rows = [], interfaces = [], filter = 'all', targetType = 'host', preview = null, busy = false, stopped = false, loading = false;
-let hostRules = [], hostExternal = [], hostPreview = null, hostKind = 'block', tab = 'routes', loadingHosts = false;
+let hostRules = [], hostExternal = [], hostPreview = null, hostKind = 'block', tab = 'routes', loadingHosts = false, editingEntry = null;
 const labels = {saved:'网卡保存', local:'本地配置', tunnel:'隧道路由', runtime:'临时路由'};
 const escape = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const displayTarget = (r) => r.cidr === '0.0.0.0/0' ? '默认路由' : r.cidr.replace(/\/32$/, '');
@@ -29,7 +29,7 @@ function setBusy(value) {
   $('#cancel-hosts').disabled = value;
   $('#close-hosts').disabled = value;
   document.querySelectorAll('.toggle').forEach(el => el.disabled = value || stopped);
-  document.querySelectorAll('.rule-remove').forEach(el => el.disabled = value || stopped);
+  document.querySelectorAll('.rule-remove,.rule-edit,.ext-edit,.ext-delete,.ext-save,.ext-cancel').forEach(el => el.disabled = value || stopped);
   $('#add-form').querySelectorAll('input,select,button').forEach(el => el.disabled = value || stopped);
   $('#hosts-form').querySelectorAll('input,button').forEach(el => el.disabled = value || stopped);
 }
@@ -54,15 +54,19 @@ function renderHosts() {
     const action = r.kind === 'block' ? '屏蔽' : '指定 IP';
     const locked = Boolean(r.protected);
     const control = locked ? '<span class="lock">系统条目</span>'
-      : `<button type="button" class="button secondary small rule-remove" data-domain="${escape(r.domain)}" ${busy || stopped ? 'disabled' : ''}>删除</button>`;
+      : `<button type="button" class="button secondary small rule-edit" data-domain="${escape(r.domain)}" ${busy || stopped ? 'disabled' : ''}>编辑</button><button type="button" class="button secondary small rule-remove" data-domain="${escape(r.domain)}" ${busy || stopped ? 'disabled' : ''}>删除</button>`;
     return `<tr><td class="mono">${escape(r.domain)}</td><td><span class="badge ${r.kind === 'block' ? 'blocked' : 'tunnel'}">${action}</span>${locked ? '<span class="status-note">受保护</span>' : ''}</td><td class="mono">${escape(r.address)}</td><td class="switch-col">${control}</td></tr>`;
   }).join('') : '<tr><td colspan="4" class="empty">还没有受管规则。右侧可以新建，或使用“屏蔽 Postman 自动更新”。</td></tr>';
   $('#hosts-count').textContent = `${hostRules.length} 条`;
   $('#hosts-external').innerHTML = hostExternal.length ? hostExternal.map(e => {
     const tag = e.system ? '<span class="badge blocked">系统</span>'
       : e.block ? '<span class="badge" title="这是屏蔽条目；新建同名规则时会提示迁移">屏蔽</span>' : '';
-    return `<tr><td class="mono">${escape(e.address)}</td><td class="mono">${escape(e.domains.join(' '))} ${tag}</td></tr>`;
-  }).join('') : '<tr><td colspan="2" class="empty">没有其他条目。</td></tr>';
+    let operate;
+    if (e.system) operate = '<span class="lock">只读</span>';
+    else if (editingEntry === e.id) operate = `<input class="inline-input" id="edit-address" value="${escape(e.address)}" aria-label="新的 IP"><button type="button" class="button secondary small ext-save" data-id="${escape(e.id)}" ${busy || stopped ? 'disabled' : ''}>保存</button><button type="button" class="button secondary small ext-cancel" ${busy || stopped ? 'disabled' : ''}>取消</button>`;
+    else operate = `<button type="button" class="button secondary small ext-edit" data-id="${escape(e.id)}" ${busy || stopped ? 'disabled' : ''}>编辑</button><button type="button" class="button secondary small ext-delete" data-id="${escape(e.id)}" ${busy || stopped ? 'disabled' : ''}>删除</button>`;
+    return `<tr><td class="mono">${escape(e.address)}</td><td class="mono">${escape(e.domains.join(' '))} ${tag}</td><td class="switch-col">${operate}</td></tr>`;
+  }).join('') : '<tr><td colspan="3" class="empty">没有其他条目。</td></tr>';
   $('#external-count').textContent = `${hostExternal.length} 条`;
 }
 async function refresh({quiet=false}={}) {
@@ -121,15 +125,29 @@ async function openHostPreview(data) {
   setBusy(true);
   try {
     hostPreview = await api('hosts/preview', data);
-    const action = hostPreview.action === 'remove' ? '删除' : hostPreview.action === 'block' ? '屏蔽' : '指定 IP';
-    $('#hosts-title').textContent = `${action}域名规则`;
-    $('#hosts-summary').textContent = hostPreview.action === 'remove'
-      ? '将从受管块中删除这条域名，恢复系统默认解析。'
-      : hostPreview.adopted ? '该域名已存在于 /etc/hosts 的其他位置，本次会把它迁移进受管块。'
-      : '把规则写入受管块并刷新 DNS 缓存。';
-    $('#hosts-domain').textContent = hostPreview.domain;
-    $('#hosts-action').textContent = action;
-    $('#hosts-address').textContent = hostPreview.rule ? hostPreview.rule.address : '—';
+    const a = hostPreview.action;
+    const label = {remove:'删除', block:'屏蔽', pin:'指定 IP',
+                   'line-update':'修改 IP', 'line-delete':'删除条目'}[a] || a;
+    const lineOp = a === 'line-update' || a === 'line-delete';
+    $('#hosts-title').textContent = label;
+    if (lineOp) {
+      $('#hosts-summary').textContent = a === 'line-delete'
+        ? '将从 /etc/hosts 删除这一行，恢复到系统默认解析（受管块不受影响）。'
+        : '将修改这一行的 IP，同一行里的其他主机名会一起变更。';
+      $('#hosts-domain').textContent = hostPreview.entry.domains.join(' ');
+      $('#hosts-action').textContent = label;
+      $('#hosts-address').textContent = a === 'line-delete' ? '—'
+        : `${hostPreview.entry.address} → ${hostPreview.line_after.split(/\s+/)[0]}`;
+    } else {
+      const action = a === 'remove' ? '删除' : a === 'block' ? '屏蔽' : '指定 IP';
+      $('#hosts-summary').textContent = a === 'remove'
+        ? '将从受管块中删除这条域名，恢复系统默认解析。'
+        : hostPreview.adopted ? '该域名已存在于 /etc/hosts 的其他位置，本次会把它迁移进受管块。'
+        : '把规则写入受管块并刷新 DNS 缓存。';
+      $('#hosts-domain').textContent = hostPreview.domain;
+      $('#hosts-action').textContent = action;
+      $('#hosts-address').textContent = hostPreview.rule ? hostPreview.rule.address : '—';
+    }
     $('#hosts-commands').textContent = hostPreview.commands.join('\n');
     $('#hosts-warning').textContent = hostPreview.warning || ''; $('#hosts-warning').hidden = !hostPreview.warning;
     $('#hosts-status').textContent = '确认后会打开 macOS 管理员授权窗口。';
@@ -201,7 +219,7 @@ $('#confirm-hosts').addEventListener('click', async () => {
   setBusy(true); $('#hosts-status').textContent = '等待管理员授权并核对 /etc/hosts…'; $('#confirm-hosts').textContent = '处理中…';
   try {
     const result = await api('hosts/apply', {id: hostPreview.id});
-    $('#hosts-dialog').close(); hostPreview = null; setBusy(false);
+    $('#hosts-dialog').close(); hostPreview = null; editingEntry = null; setBusy(false);
     await refreshHosts({quiet:true}); notice(result.message, 'success');
   } catch (e) {
     $('#hosts-dialog').close(); hostPreview = null; setBusy(false);
@@ -219,8 +237,43 @@ $('#hosts-form').addEventListener('submit', e => {
 $('#hosts-form').addEventListener('change', e => { if (e.target.name === 'host-kind') updateHostForm(); });
 $('#hosts-form').addEventListener('reset', () => setTimeout(updateHostForm, 0));
 $('#hosts-rules').addEventListener('click', e => {
+  const edit = e.target.closest('.rule-edit');
+  if (edit) {
+    const rule = hostRules.find(r => r.domain === edit.dataset.domain);
+    if (rule) openHostPreview({action: rule.kind, domain: rule.domain,
+                               address: rule.kind === 'pin' ? rule.address : ''});
+    return;
+  }
   const button = e.target.closest('.rule-remove'); if (!button) return;
   openHostPreview({action: 'remove', domain: button.dataset.domain});
+});
+$('#hosts-external').addEventListener('click', e => {
+  const edit = e.target.closest('.ext-edit');
+  const cancel = e.target.closest('.ext-cancel');
+  const save = e.target.closest('.ext-save');
+  const remove = e.target.closest('.ext-delete');
+  if (edit) {
+    editingEntry = edit.dataset.id; renderHosts();
+    const input = $('#edit-address');
+    if (input) { input.focus(); input.select(); }
+    return;
+  }
+  if (cancel) { editingEntry = null; renderHosts(); return; }
+  if (remove) {
+    editingEntry = null; renderHosts();
+    openHostPreview({action: 'line-delete', entry: remove.dataset.id});
+    return;
+  }
+  if (save) {
+    const address = ($('#edit-address')?.value || '').trim();
+    if (!address) { notice('请填写新的 IP。', 'error'); return; }
+    openHostPreview({action: 'line-update', entry: save.dataset.id, address});
+  }
+});
+$('#hosts-external').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !e.target.matches('#edit-address')) return;
+  e.preventDefault();
+  const save = document.querySelector('.ext-save'); if (save) save.click();
 });
 $('#preset-postman').addEventListener('click', () => {
   $('#host-domain').value = 'dl.pstmn.io';

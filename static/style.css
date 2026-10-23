@@ -21,3 +21,6 @@
 .preset{margin-top:18px;border-top:1px dashed var(--border);padding-top:14px}
 .preset h3{margin:0 0 10px;font-size:.9rem;color:var(--muted);font-weight:600}
 .interfaces-card .table-scroll{margin-top:4px}
+
+.inline-input{width:132px;min-height:32px;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-family:inherit;font-size:.85rem}
+.switch-col .button + .button{margin-left:4px}
