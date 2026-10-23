@@ -33,13 +33,23 @@ class ParseTests(unittest.TestCase):
         self.assertTrue(flagged['::1'])
         self.assertTrue(flagged['255.255.255.255'])
         self.assertFalse(flagged['192.0.2.10'])
-        for address in ('127.0.0.1', '::1', '255.255.255.255', 'fe80::1', '0.0.0.0'):
+        for address in ('127.0.0.1', '::1', '255.255.255.255', 'fe80::1'):
             self.assertTrue(hosts.system_address(address), address)
+        for address in ('0.0.0.0', '::', '192.0.2.10'):
+            self.assertFalse(hosts.system_address(address), address)
         for address in ('0.0.0.0',):
             self.assertFalse(hosts.protected(address), address)
         for address in ('127.0.0.1', '127.0.0.2', '169.254.1.1', '224.0.0.1',
                         '255.255.255.255', '::1'):
             self.assertTrue(hosts.protected(address), address)
+
+    def test_blocking_entry_outside_managed_block_is_not_system(self):
+        text = BASE + '0.0.0.0 dl.pstmn.io\n'
+        _, external = hosts.parse(text)
+        entry = external[-1]
+        self.assertFalse(entry['system'], '用户自己写的屏蔽条目不应被标记为系统条目')
+        self.assertEqual(entry['address'], '0.0.0.0')
+        self.assertEqual(entry['domains'], ['dl.pstmn.io'])
 
     def test_protected_managed_entry_cannot_be_changed(self):
         text = BASE + hosts.BEGIN + '\n127.0.0.1 keepme.internal\n' + hosts.END + '\n'

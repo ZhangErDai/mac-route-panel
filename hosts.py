@@ -41,15 +41,20 @@ def protected(address: str) -> bool:
 
 
 def system_address(address: str) -> bool:
-    """True for well-known system entries shown read-only in the UI."""
+    """True for well-known system entries shown read-only in the UI.
+
+    ``0.0.0.0``/``::`` are deliberately excluded: outside the managed block they
+    are usually someone's own blocking rule, not something the system owns.
+    """
     try:
         ip = ipaddress.ip_address(address)
     except ValueError:
         return False
+    if ip.is_unspecified:
+        return False
     if ip.version == 6:
-        return ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_unspecified
-    return (ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
-            or address == BLOCK)
+        return ip.is_loopback or ip.is_link_local or ip.is_multicast
+    return ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
 
 
 

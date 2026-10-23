@@ -58,7 +58,11 @@ function renderHosts() {
     return `<tr><td class="mono">${escape(r.domain)}</td><td><span class="badge ${r.kind === 'block' ? 'blocked' : 'tunnel'}">${action}</span>${locked ? '<span class="status-note">受保护</span>' : ''}</td><td class="mono">${escape(r.address)}</td><td class="switch-col">${control}</td></tr>`;
   }).join('') : '<tr><td colspan="4" class="empty">还没有受管规则。右侧可以新建，或使用“屏蔽 Postman 自动更新”。</td></tr>';
   $('#hosts-count').textContent = `${hostRules.length} 条`;
-  $('#hosts-external').innerHTML = hostExternal.length ? hostExternal.map(e => `<tr><td class="mono">${escape(e.address)}</td><td class="mono">${escape(e.domains.join(' '))}${e.system ? ' <span class="badge blocked">系统</span>' : ''}</td></tr>`).join('') : '<tr><td colspan="2" class="empty">没有其他条目。</td></tr>';
+  $('#hosts-external').innerHTML = hostExternal.length ? hostExternal.map(e => {
+    const tag = e.system ? '<span class="badge blocked">系统</span>'
+      : e.block ? '<span class="badge" title="这是屏蔽条目；新建同名规则时会提示迁移">屏蔽</span>' : '';
+    return `<tr><td class="mono">${escape(e.address)}</td><td class="mono">${escape(e.domains.join(' '))} ${tag}</td></tr>`;
+  }).join('') : '<tr><td colspan="2" class="empty">没有其他条目。</td></tr>';
   $('#external-count').textContent = `${hostExternal.length} 条`;
 }
 async function refresh({quiet=false}={}) {

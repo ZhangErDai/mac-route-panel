@@ -157,7 +157,11 @@ class ApiTests(unittest.TestCase):
             code,data=self.request('/api/hosts')
         self.assertEqual(code,200)
         self.assertEqual(data['managed'],[])
-        self.assertTrue(any(e['domains']==['localhost'] for e in data['external']))
+        localhost=next(e for e in data['external'] if e['domains']==['localhost'])
+        blocked=next(e for e in data['external'] if e['domains']==['example.test'])
+        self.assertTrue(localhost['system'])
+        self.assertFalse(blocked['system'])
+        self.assertTrue(blocked['block'])
 
     def test_hosts_preview_and_apply_go_through_one_admin_helper(self):
         text = '127.0.0.1 localhost\n'
