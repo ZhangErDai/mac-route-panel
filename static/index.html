@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="session-token" content="__SESSION_TOKEN__">
+  <meta name="description" content="查看本机 IPv4 路由，开启、关闭和添加路由。">
+  <title>本机路由管理</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="header">
+      <div class="brand"><img src="/static/favicon.svg" width="40" height="40" alt=""><div><h1>本机路由管理 <span>IPv4</span></h1><p>查看路由、开启关闭、添加规则</p></div></div>
+      <button id="shutdown" class="button danger"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2v10m-5-8a9 9 0 1 0 10 0"/></svg>关闭后台</button>
+    </header>
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+    <main class="layout">
+      <section class="left">
+        <section class="card routes-card">
+          <div class="card-heading"><h2>已有路由</h2><button id="refresh" class="button secondary"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M20 12a8 8 0 1 0-2 5"/></svg>刷新</button></div>
+          <div class="toolbar"><label class="search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></svg><input id="search" type="search" aria-label="搜索路由" placeholder="搜索目标 IP、网关或接口"></label><div class="filters" role="group" aria-label="路由状态筛选"><button class="active" data-filter="all" aria-pressed="true">全部</button><button data-filter="enabled" aria-pressed="false">已开启</button><button data-filter="disabled" aria-pressed="false">已关闭</button></div></div>
+          <div class="table-scroll"><table><thead><tr><th>目标地址</th><th>网关 / 出口</th><th>接口</th><th>来源 / 状态</th><th class="switch-col">开关</th></tr></thead><tbody id="routes"><tr><td colspan="5" class="empty">正在读取本机路由…</td></tr></tbody></table></div>
+          <div class="table-footer"><span>关闭后保留配置，可重新开启。</span><span id="updated"></span></div>
+        </section>
+        <section class="card system-card"><details open><summary><h2>系统路由 <span>只读</span></h2><span id="system-count"></span></summary><div class="table-scroll"><table><thead><tr><th>目标地址</th><th>网关 / 出口</th><th>接口</th><th>状态</th></tr></thead><tbody id="system-routes"></tbody></table></div><p class="muted footnote">默认、直连、回环和组播路由由系统维护。邻居缓存不列入开关列表。</p></details></section>
+      </section>
+      <aside class="card add-card">
+        <h2>添加路由</h2>
+        <form id="add-form">
+          <div class="segmented" role="group" aria-label="目标类型"><button type="button" data-target="host" class="active" aria-pressed="true">单个 IP</button><button type="button" data-target="network" aria-pressed="false">网段</button></div>
+          <label class="field">目标地址<input id="destination" name="destination" value="198.18.4.136" required autocomplete="off" spellcheck="false"><small id="destination-help">单个 IP，只针对这一台设备。</small></label>
+          <fieldset><legend>转发方式</legend><label><input type="radio" name="mode" value="gateway" checked>通过网关</label><label><input type="radio" name="mode" value="interface">通过接口</label></fieldset>
+          <label id="gateway-field" class="field">网关地址<input id="gateway" value="198.18.0.204" autocomplete="off" spellcheck="false" required></label>
+          <label id="interface-field" class="field" hidden>出口接口<select id="interface" aria-label="出口隧道接口"></select></label>
+          <div class="path-card"><h3>访问路径示意</h3><div class="path-node">本机</div><div class="path-line"></div><div id="path-via" class="path-node address">198.18.0.204</div><div class="path-line"></div><div id="path-target" class="path-node address">198.18.4.136</div><p>按填写的规则生成，不代表已验证连通性。</p></div>
+          <p class="muted instruction">新增为临时系统路由，配置保存在本地。重启后可在列表中重新开启。</p>
+          <p class="muted instruction">提交后将请求 macOS 管理员授权。</p>
+          <button type="submit" class="button primary full" id="add-button">预览并添加</button>
+          <button type="reset" class="button secondary full">重置</button>
+        </form>
+      </aside>
+    </main>
+    <footer class="page-footer">仅在本机运行 · 不读取 VPN 软件状态<span id="connection">后台已连接</span></footer>
+  </div>
+  <dialog id="preview-dialog" aria-labelledby="preview-title">
+    <div class="dialog-head"><h2 id="preview-title">确认路由操作</h2><button class="icon-button" id="close-dialog" aria-label="关闭预览">×</button></div>
+    <p id="preview-summary"></p><p id="preview-warning" class="warning" hidden></p>
+    <div class="preview-route"><div><span>目标地址</span><strong id="preview-target"></strong></div><div><span>网关 / 出口</span><strong id="preview-gateway"></strong></div><div><span>接口</span><strong id="preview-interface"></strong></div></div>
+    <details class="command-details"><summary>查看将执行的系统命令</summary><pre id="preview-commands"></pre><p>网卡配置更新后，仅在需要时再添加或删除运行时路由。</p></details>
+    <p id="apply-status" class="muted" aria-live="polite">确认后会打开 macOS 管理员授权窗口。</p>
+    <div class="dialog-actions"><button class="button secondary" id="cancel-dialog">取消</button><button class="button primary" id="confirm-apply">确认并授权</button></div>
+  </dialog>
+</body>
+</html>
